@@ -1,15 +1,22 @@
-# Flight Tracker — MAD → China
+# Flight Price Tracker
 
-Monitor round-trip flight prices from Madrid to Beijing, Shanghai, Guangzhou, Shenzhen and Hong Kong for October 2026. No API key required. Powered by `fast-flights`, a library that queries Google Flights' internal API directly.
+Monitor and track round-trip flight prices between any origin and a set of destinations. Prices are automatically fetched from Google Flights multiple times a day and stored historically so you can spot trends and find the best time to book.
+
+No API key, no registration, no monthly cost. Fully self-hosted with Docker.
+
+---
 
 ## Features
 
-- **5 routes**: MAD→PEK, MAD→PVG, MAD→CAN, MAD→SZX, MAD→HKG
-- **5 departure dates**: Oct 9, 11, 13, 15, 17 — 12-day round trips
-- **2 sweeps/day** at 08:00 and 20:00 UTC (25 searches each = 50/day, no limits)
-- **Gulf carrier filter**: Emirates, Etihad, Qatar Airways, flydubai, Oman Air, Gulf Air, Saudia, Kuwait Airways…
-- **Price history chart** with route/date filtering
-- **No registration, no API key, no monthly cost**
+- **Fully configurable** — set any origin, destinations, departure date window, step and stay duration from the UI
+- **Automatic price sweeps** — 2 searches per day (08:00 and 20:00 UTC), unlimited
+- **Price history chart** — track how prices evolve over days and filter by route/date
+- **Airline filters** — exclude carriers by name (e.g. Gulf/Arab airlines) on both outbound and return legs
+- **Flight detail cards** — airline logo, departure/arrival times, duration, stop count and a direct link to Google Flights for that exact search
+- **Manual refresh** — trigger an immediate sweep from the UI at any time
+- **Zero external dependencies** — queries Google Flights' internal API directly via `fast-flights`
+
+---
 
 ## Quick Start
 
@@ -19,17 +26,37 @@ cd flight-planner
 docker compose up -d --build
 ```
 
-Open **http://localhost** and click **"Actualizar ahora"** for the first search.
+Open **http://localhost** in your browser.
 
-That's it. No `.env` file needed.
+Click **"Actualizar ahora"** to run the first search, or wait for the automatic sweep.  
+No `.env` file or API keys needed.
+
+---
+
+## Configuration
+
+Click the **"Configurar"** button in the top-right corner to open the settings panel:
+
+| Setting | Description |
+|---------|-------------|
+| **Origin** | Departure airport IATA code (e.g. `MAD`, `BCN`, `LHR`) |
+| **Destinations** | Any number of destination IATA codes (add/remove as chips) |
+| **Date window** | Start date, end date, and how many days between each checked departure |
+| **Stay duration** | Number of days between outbound and return flight |
+
+Changes take effect on the next sweep. Use **"Guardar y buscar"** to apply immediately and trigger a search.
+
+The settings panel shows a live preview of all departure dates that will be searched and the total number of searches per sweep.
 
 ---
 
 ## How it works
 
-`fast-flights` reverse-engineers the Google Flights URL parameter (`?tfs=`), which encodes flight queries as Base64 Protobuf. The library constructs valid Protobuf queries and sends them directly to Google — no browser, no Playwright, just lightweight HTTP requests with TLS fingerprinting via `primp`.
+[`fast-flights`](https://github.com/AWeirdDev/flights) reverse-engineers the Google Flights URL parameter (`?tfs=`), which encodes flight queries as Base64 Protobuf. The library constructs valid queries and sends them directly to Google — no browser, no Playwright, just lightweight HTTP requests with TLS fingerprinting via `primp`.
 
-For EU users: requests are routed through `fetch_mode="fallback"` (the library's hosted relay) to handle GDPR cookie consent transparently.
+**EU/GDPR bypass**: a `SOCS` consent cookie is injected into every Google request at the HTTP level, preventing the GDPR redirect without requiring a headless browser.
+
+Each round-trip is performed as two one-way searches (outbound + return), and the results are combined. Prices are stored in SQLite and served via a FastAPI REST API.
 
 ---
 
@@ -37,20 +64,34 @@ For EU users: requests are routed through `fetch_mode="fallback"` (the library's
 
 | Parameter | Value |
 |-----------|-------|
-| Searches per sweep | 25 (5 routes × 5 dates) |
-| HTTP calls per sweep | 50 (2 one-way per route+date) |
 | Sweeps per day | 2 (08:00 + 20:00 UTC) |
-| Delay between calls | 3 seconds |
-| Time per sweep | ~3 minutes |
+| HTTP calls per search | 2 (one-way out + one-way return) |
+| Delay between calls | 5 seconds |
 | Quota | Unlimited |
+
+The number of searches per sweep scales with your configuration: `destinations × departure_dates`.
 
 ---
 
-## Gulf/Arab carrier filter
+## Airline filter
 
-Excluded by airline name keyword matching:
+Flights operated by the following carriers (matched by name) are excluded from results:
 
 Emirates · Etihad · Qatar Airways · flydubai · Air Arabia · Oman Air · Gulf Air · Saudia · Kuwait Airways · flynas · flyadeal · Royal Jordanian · Iraqi Airways
+
+This list can be extended in `backend/filters.py`.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Data source | Google Flights via `fast-flights` (Protobuf + `primp`) |
+| Backend | Python 3.11, FastAPI, APScheduler, SQLAlchemy, SQLite |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Recharts |
+| Serving | Nginx (frontend) + Uvicorn (backend) |
+| Deployment | Docker Compose |
 
 ---
 
@@ -79,21 +120,43 @@ npm run dev   # proxies /api/* → localhost:8000
 ```
 flight-planner/
 ├── backend/
-│   ├── main.py              # FastAPI + lifespan
-│   ├── scheduler.py         # APScheduler (2×/day)
-│   ├── flights_client.py    # fast-flights wrapper
-│   ├── filters.py           # Gulf airline + airport filters
-│   ├── models.py            # SQLAlchemy models
+│   ├── main.py              # FastAPI app + lifespan
+│   ├── scheduler.py         # APScheduler (2×/day), reads config from DB
+│   ├── flights_client.py    # fast-flights wrapper + GDPR bypass
+│   ├── filters.py           # Airline name/airport exclusion filters
+│   ├── models.py            # SQLAlchemy: FlightOffer, SearchRun, AppConfig
 │   ├── database.py          # SQLite engine
-│   ├── routes.py            # REST endpoints
+│   ├── routes.py            # REST API endpoints (/api/*)
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx
+│   │   ├── App.tsx                      # Main layout + state
 │   │   ├── components/
-│   │   └── api/flights.ts
+│   │   │   ├── FlightCard.tsx           # Flight result card
+│   │   │   ├── PriceChart.tsx           # Price history chart
+│   │   │   ├── RouteFilter.tsx          # Route + date filter sidebar
+│   │   │   ├── SettingsModal.tsx        # Configuration panel
+│   │   │   ├── StatsBar.tsx             # Best price + last run info
+│   │   │   └── QuotaTracker.tsx         # Activity summary
+│   │   └── api/flights.ts              # API client + TypeScript types
 │   ├── nginx.conf
 │   └── Dockerfile
-├── data/                    # Volume (flights.db)
+├── data/                    # Docker volume — flights.db persisted here
 └── docker-compose.yml
 ```
+
+---
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/offers` | Best current offer per route+date |
+| `GET` | `/api/history` | Price time-series for charts |
+| `GET` | `/api/config` | Active routes and dates (for filters) |
+| `GET` | `/api/settings` | Current search configuration |
+| `PUT` | `/api/settings` | Update search configuration |
+| `GET` | `/api/quota` | Sweep activity statistics |
+| `GET` | `/api/runs` | Recent sweep history |
+| `POST` | `/api/refresh` | Trigger an immediate sweep |
+| `GET` | `/health` | Backend health check |
