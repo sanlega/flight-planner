@@ -1,9 +1,8 @@
 """
 APScheduler: 2 sweeps/day at 08:00 and 20:00 UTC.
 
-No external API quota — fast-flights queries Google directly.
-Each sweep: 5 routes × 5 departure dates = 25 round-trip searches
-(= 50 one-way HTTP calls internally, ~3 min total with delays).
+Each sweep loads routes, dates, and filters from AppConfig (DB),
+then searches Google Flights for round-trip offers.
 """
 
 import json
@@ -24,8 +23,8 @@ scheduler = AsyncIOScheduler()
 
 async def run_sweep(triggered_by: str = "scheduler") -> dict:
     """
-    Search all routes × all departure dates and persist the cheapest offer
-    for each combination. Routes and dates are loaded from AppConfig (DB).
+    Search all routes x all departure dates and persist the cheapest offer
+    for each combination. Routes, dates, and filters loaded from AppConfig.
     """
     db = SessionLocal()
 
@@ -40,6 +39,11 @@ async def run_sweep(triggered_by: str = "scheduler") -> dict:
     routes = cfg.get_routes()
     dep_dates = cfg.get_departure_dates()
     stay_days = cfg.stay_days
+
+    # Load filter settings
+    excluded_airlines = cfg.get_excluded_airlines()
+    max_stops = cfg.max_stops
+    max_duration_hours = cfg.max_duration_hours
 
     run = SearchRun(triggered_by=triggered_by, started_at=datetime.utcnow())
     db.add(run)
@@ -61,8 +65,11 @@ async def run_sweep(triggered_by: str = "scheduler") -> dict:
                     destination=destination,
                     departure_date=dep_date,
                     return_date=ret_date,
+                    excluded_airlines=excluded_airlines,
+                    max_stops=max_stops,
+                    max_duration_hours=max_duration_hours,
                 )
-                total_calls += 1  # counts as 1 logical search (2 HTTP calls internally)
+                total_calls += 1
 
                 if not offers:
                     logger.debug("No offers (post-filter) for %s on %s", route_str, dep_date)
@@ -79,20 +86,19 @@ async def run_sweep(triggered_by: str = "scheduler") -> dict:
                 db.commit()
                 total_saved += 1
                 logger.info(
-                    "Saved %s %s → €%.0f (%s out / %s ret)",
+                    "Saved %s %s -> EUR%.0f (%s out / %s ret)",
                     route_str, dep_date,
                     best["price_eur"],
                     best["outbound_duration"],
-                    best["return_duration"],
+                    best["return_duration"] or "n/a",
                 )
 
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 msg = f"{route_str} {dep_date}: {exc}"
                 logger.error("Error during search: %s", msg)
                 errors.append(msg)
 
     finished_at = datetime.utcnow()
-    # Reload run object to avoid DetachedInstanceError
     run = db.query(SearchRun).get(run_id)
     run.routes_searched = len(routes)
     run.calls_made = total_calls

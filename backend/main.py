@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import Base, engine
+from database import Base, engine, migrate_schema
 from routes import router
 from scheduler import start_scheduler, stop_scheduler
 
@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
+    migrate_schema()
     logger.info("Starting scheduler...")
     start_scheduler()
     yield
@@ -31,8 +32,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Flight Price Tracker",
-    description="MAD → China flight price monitor using Amadeus API",
-    version="1.0.0",
+    description="Self-hosted flight price monitor — Google Flights scraping, no API keys",
+    version="2.0.0",
     lifespan=lifespan,
 )
 

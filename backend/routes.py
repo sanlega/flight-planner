@@ -31,6 +31,37 @@ AIRPORT_NAMES = {
     "SZX": "Shenzhen Bao'an",
     "HKG": "Hong Kong Int'l",
     "MAD": "Madrid Barajas",
+    "BCN": "Barcelona El Prat",
+    "CTU": "Chengdu Tianfu",
+    "XIY": "Xi'an Xianyang",
+    "WUH": "Wuhan Tianhe",
+    "NKG": "Nanjing Lukou",
+    "TAO": "Qingdao Jiaodong",
+    "HGH": "Hangzhou Xiaoshan",
+    "CSX": "Changsha Huanghua",
+    "NRT": "Tokyo Narita",
+    "HND": "Tokyo Haneda",
+    "ICN": "Seoul Incheon",
+    "SIN": "Singapore Changi",
+    "BKK": "Bangkok Suvarnabhumi",
+    "KUL": "Kuala Lumpur",
+    "TPE": "Taipei Taoyuan",
+    "MNL": "Manila Ninoy Aquino",
+    "SGN": "Ho Chi Minh City",
+    "HAN": "Hanoi Noi Bai",
+    "DEL": "Delhi Indira Gandhi",
+    "BOM": "Mumbai",
+    "LHR": "London Heathrow",
+    "CDG": "Paris Charles de Gaulle",
+    "FRA": "Frankfurt",
+    "AMS": "Amsterdam Schiphol",
+    "IST": "Istanbul",
+    "FCO": "Rome Fiumicino",
+    "MXP": "Milan Malpensa",
+    "JFK": "New York JFK",
+    "LAX": "Los Angeles",
+    "ORD": "Chicago O'Hare",
+    "SFO": "San Francisco",
 }
 
 
@@ -157,7 +188,7 @@ def get_price_history(
 
 @router.get("/quota")
 def get_search_stats(db: Session = Depends(get_db)):
-    """Returns how many searches have been done this month (informational)."""
+    """Returns how many searches have been done this month."""
     month = datetime.utcnow().strftime("%Y-%m")
     since = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     count = db.query(SearchRun).filter(SearchRun.started_at >= since, SearchRun.success == True).count()
@@ -168,7 +199,7 @@ def get_search_stats(db: Session = Depends(get_db)):
         "year_month": month,
         "sweeps_this_month": count,
         "searches_this_month": count * n_routes * n_dates,
-        "source": "Google Flights (fast-flights)",
+        "source": "Google Flights (scraping)",
         "quota_limit": "unlimited",
         "last_updated": datetime.utcnow().isoformat(),
     }
@@ -216,6 +247,9 @@ class SettingsIn(BaseModel):
     departure_date_end: str
     departure_date_step: int
     stay_days: int
+    max_stops: int = 2
+    max_duration_hours: int = 40
+    excluded_airlines: List[str] = []
 
 
 def _get_or_create_config(db: Session) -> AppConfig:
@@ -238,6 +272,9 @@ def get_settings(db: Session = Depends(get_db)):
         "departure_date_end": cfg.departure_date_end.isoformat(),
         "departure_date_step": cfg.departure_date_step,
         "stay_days": cfg.stay_days,
+        "max_stops": cfg.max_stops,
+        "max_duration_hours": cfg.max_duration_hours,
+        "excluded_airlines": cfg.get_excluded_airlines(),
     }
 
 
@@ -268,6 +305,11 @@ def update_settings(body: SettingsIn, db: Session = Depends(get_db)):
     cfg.departure_date_end = end
     cfg.departure_date_step = body.departure_date_step
     cfg.stay_days = body.stay_days
+    cfg.max_stops = max(-1, min(body.max_stops, 5))
+    cfg.max_duration_hours = max(0, min(body.max_duration_hours, 72))
+    cfg.excluded_airlines_json = json.dumps(
+        [a.strip().lower() for a in body.excluded_airlines if a.strip()]
+    )
     db.commit()
     return {"ok": True}
 

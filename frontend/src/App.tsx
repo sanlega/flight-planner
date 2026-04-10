@@ -170,6 +170,7 @@ export default function App() {
           lastRun={lastRun}
           onRefresh={handleRefresh}
           refreshing={refreshing}
+          config={config}
         />
 
         {/* Chart section */}
