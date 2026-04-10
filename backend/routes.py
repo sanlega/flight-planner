@@ -254,7 +254,7 @@ async def manual_refresh(user: User = Depends(get_current_user)):
         return result
     except Exception as exc:
         logger.exception("Manual refresh failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Search refresh failed") from exc
 
 
 # ─── Search settings (read + write) ─────────────────────────────────────────

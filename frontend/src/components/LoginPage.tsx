@@ -80,7 +80,7 @@ export default function LoginPage({ onLogin }: Props) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={4}
+                minLength={8}
                 className="w-full bg-[#0d1526] border border-[#1e2d45] text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
                 placeholder="Tu contrasena"
               />
