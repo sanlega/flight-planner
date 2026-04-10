@@ -35,6 +35,7 @@ export default function App() {
   const [activeRoutes, setActiveRoutes] = useState<Set<string>>(new Set())
   const [activeDates, setActiveDates] = useState<Set<string>>(new Set())
   const [sortBy, setSortBy] = useState<'price' | 'date'>('price')
+  const [maxDurationH, setMaxDurationH] = useState(50) // 50 = no limit
   const [showChart, setShowChart] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
 
@@ -112,11 +113,23 @@ export default function App() {
     })
   }
 
+  // Parse "14h 30m" → minutes
+  const parseDurationMin = (s: string) => {
+    const h = s.match(/(\d+)\s*h/)?.[1]
+    const m = s.match(/(\d+)\s*m/)?.[1]
+    return (h ? parseInt(h) * 60 : 0) + (m ? parseInt(m) : 0)
+  }
+
   // Filtered & sorted offers
   const visibleOffers = offers
-    .filter(
-      (o) => activeRoutes.has(o.route) && activeDates.has(o.departure_date),
-    )
+    .filter((o) => {
+      if (!activeRoutes.has(o.route) || !activeDates.has(o.departure_date)) return false
+      if (maxDurationH < 50 && o.outbound_duration) {
+        const mins = parseDurationMin(o.outbound_duration)
+        if (mins > maxDurationH * 60) return false
+      }
+      return true
+    })
     .sort((a, b) =>
       sortBy === 'price'
         ? a.price_eur - b.price_eur
@@ -213,6 +226,25 @@ export default function App() {
                 onToggleRoute={toggleRoute}
                 onToggleDate={toggleDate}
               />
+              {/* Max outbound duration filter */}
+              <div className="mt-3 pt-3 border-t border-[#1e2d45]">
+                <span className="text-xs uppercase tracking-wider text-slate-500 mb-2 block">
+                  Duración max. trayecto
+                </span>
+                <input
+                  type="range"
+                  min={10}
+                  max={50}
+                  value={maxDurationH}
+                  onChange={(e) => setMaxDurationH(Number(e.target.value))}
+                  className="w-full accent-blue-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  {maxDurationH >= 50
+                    ? 'Sin límite'
+                    : `Máximo ${maxDurationH}h`}
+                </p>
+              </div>
             </div>
             <QuotaTracker quota={quota} />
           </aside>

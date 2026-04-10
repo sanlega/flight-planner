@@ -65,7 +65,7 @@ export default function StatsBar({ offers, lastRun, onRefresh, refreshing, confi
                 {best ? (
                   <>
                     <div className="text-xl font-bold text-white">
-                      EUR{best.price_eur.toLocaleString('es-ES', { minimumFractionDigits: 0 })}
+                      {best.price_eur.toLocaleString('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5">
                       {format(parseISO(best.departure_date), 'd MMM', { locale: es })}

@@ -103,10 +103,22 @@ REQUEST_DELAY_SECS = 5
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_iso_dt(flight_date: date, time_str: str, extra_days: int = 0) -> str:
-    """Convert fast-flights time string + date into ISO datetime string."""
+    """Convert fast-flights time string + date into ISO datetime string.
+
+    Handles multiple formats returned by Google Flights:
+    - "7:20 AM"              (classic)
+    - "7:20AM"               (no space)
+    - "14:30"                (24h)
+    - "7:20 AM on Fri, Oct 9" (new long format with date)
+    """
     if not time_str or not str(time_str).strip():
         return ""
-    ts = str(time_str).strip()
+    # Normalise Unicode whitespace (Google uses U+202F narrow no-break space)
+    ts = re.sub(r"[\s\u00a0\u202f\u2009]+", " ", str(time_str)).strip()
+
+    # Strip trailing date info: "7:20 AM on Fri, Oct 9" → "7:20 AM"
+    ts = re.split(r"\s+on\s+", ts, maxsplit=1)[0].strip()
+
     for fmt in ("%I:%M %p", "%I:%M%p", "%H:%M"):
         try:
             t = datetime.strptime(ts, fmt)
@@ -114,6 +126,7 @@ def _make_iso_dt(flight_date: date, time_str: str, extra_days: int = 0) -> str:
             return combined.isoformat()
         except ValueError:
             continue
+    logger.warning("Could not parse time string: %r (stripped: %r)", time_str, ts)
     return ""
 
 
@@ -200,6 +213,10 @@ def _parse_flight(f, origin: str, destination: str, flight_date: date,
 
     dep_time = str(getattr(f, "departure", "") or "")
     arr_time = str(getattr(f, "arrival", "") or "")
+    if not dep_time or not arr_time:
+        logger.warning("Missing times for %s: departure=%r, arrival=%r (all attrs: %s)",
+                        name, dep_time, arr_time,
+                        {a: repr(getattr(f, a, None)) for a in ('departure', 'arrival', 'duration', 'stops', 'price')})
     duration_raw = getattr(f, "duration", "") or ""
     _stops_raw = getattr(f, "stops", 0)
     try:
