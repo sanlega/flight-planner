@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Save, RefreshCw, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
+import { X, Plus, Save, RefreshCw, Loader2, CheckCircle, AlertCircle, Filter, Trash2 } from 'lucide-react'
 
 interface Settings {
   origin: string
@@ -8,6 +8,9 @@ interface Settings {
   departure_date_end: string
   departure_date_step: number
   stay_days: number
+  max_stops: number
+  max_duration_hours: number
+  excluded_airlines: string[]
 }
 
 interface Props {
@@ -18,22 +21,27 @@ interface Props {
 
 const KNOWN_AIRPORTS: Record<string, string> = {
   MAD: 'Madrid Barajas', BCN: 'Barcelona El Prat', PMI: 'Palma de Mallorca',
-  PEK: 'Pekín Capital', PKX: 'Pekín Daxing', PVG: 'Shanghái Pudong',
-  SHA: 'Shanghái Hongqiao', CAN: 'Guangzhou', SZX: 'Shenzhen',
+  PEK: 'Beijing Capital', PKX: 'Beijing Daxing', PVG: 'Shanghai Pudong',
+  SHA: 'Shanghai Hongqiao', CAN: 'Guangzhou', SZX: 'Shenzhen',
   HKG: 'Hong Kong', CTU: 'Chengdu', XIY: 'Xi\'an', WUH: 'Wuhan',
   NKG: 'Nanjing', TAO: 'Qingdao', HGH: 'Hangzhou', CSX: 'Changsha',
-  LHR: 'Londres Heathrow', CDG: 'París Charles de Gaulle',
-  FRA: 'Fráncfort', AMS: 'Ámsterdam', IST: 'Estambul',
-  DXB: 'Dubái', SIN: 'Singapur', BKK: 'Bangkok',
+  NRT: 'Tokyo Narita', HND: 'Tokyo Haneda', ICN: 'Seoul Incheon',
+  SIN: 'Singapur', BKK: 'Bangkok', KUL: 'Kuala Lumpur',
+  TPE: 'Taipei', MNL: 'Manila', SGN: 'Ho Chi Minh',
+  DEL: 'Delhi', BOM: 'Mumbai',
+  LHR: 'Londres Heathrow', CDG: 'Paris CDG',
+  FRA: 'Frankfurt', AMS: 'Amsterdam', IST: 'Estambul',
+  FCO: 'Roma', MXP: 'Milan',
+  JFK: 'Nueva York JFK', LAX: 'Los Angeles', SFO: 'San Francisco',
 }
 
 function airportLabel(code: string) {
-  return KNOWN_AIRPORTS[code] ? `${code} – ${KNOWN_AIRPORTS[code]}` : code
+  return KNOWN_AIRPORTS[code] ? `${code} - ${KNOWN_AIRPORTS[code]}` : code
 }
 
 async function fetchSettings(): Promise<Settings> {
   const r = await fetch('/api/settings')
-  if (!r.ok) throw new Error('Error cargando configuración')
+  if (!r.ok) throw new Error('Error cargando configuracion')
   return r.json()
 }
 
@@ -49,17 +57,28 @@ async function saveSettings(s: Settings): Promise<void> {
   }
 }
 
+const STOPS_OPTIONS = [
+  { value: 0, label: 'Solo directo' },
+  { value: 1, label: 'Max. 1 escala' },
+  { value: 2, label: 'Max. 2 escalas' },
+  { value: -1, label: 'Sin limite' },
+]
+
 export default function SettingsModal({ open, onClose, onSaved }: Props) {
   const [form, setForm] = useState<Settings | null>(null)
   const [newDest, setNewDest] = useState('')
+  const [newExcluded, setNewExcluded] = useState('')
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<'idle' | 'ok' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
+  const [activeTab, setActiveTab] = useState<'routes' | 'filters'>('routes')
   const newDestRef = useRef<HTMLInputElement>(null)
+  const newExcludedRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
       setStatus('idle')
+      setActiveTab('routes')
       fetchSettings().then(setForm).catch(() => setStatus('error'))
     }
   }, [open])
@@ -79,6 +98,21 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
   const removeDest = (code: string) => {
     if (!form || form.destinations.length <= 1) return
     setForm({ ...form, destinations: form.destinations.filter(d => d !== code) })
+  }
+
+  const addExcluded = () => {
+    const kw = newExcluded.trim().toLowerCase()
+    if (!kw) return
+    if (form && !form.excluded_airlines.includes(kw)) {
+      setForm({ ...form, excluded_airlines: [...form.excluded_airlines, kw] })
+    }
+    setNewExcluded('')
+    newExcludedRef.current?.focus()
+  }
+
+  const removeExcluded = (kw: string) => {
+    if (!form) return
+    setForm({ ...form, excluded_airlines: form.excluded_airlines.filter(a => a !== kw) })
   }
 
   const handleSave = async (andRefresh: boolean) => {
@@ -126,14 +160,39 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-[#1e2d45] shrink-0">
           <div>
-            <h2 className="text-base font-bold text-white">Configuración de búsqueda</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Los cambios se aplican en el próximo sweep</p>
+            <h2 className="text-base font-bold text-white">Configuracion de busqueda</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Los cambios se aplican en el proximo sweep</p>
           </div>
           <button
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-[#1e2d45] shrink-0">
+          <button
+            onClick={() => setActiveTab('routes')}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${
+              activeTab === 'routes'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            Rutas y fechas
+          </button>
+          <button
+            onClick={() => setActiveTab('filters')}
+            className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'filters'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            Filtros
           </button>
         </div>
 
@@ -144,7 +203,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
               Cargando...
             </div>
-          ) : (
+          ) : activeTab === 'routes' ? (
             <>
               {/* Origin */}
               <section>
@@ -161,7 +220,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                     placeholder="MAD"
                   />
                   <span className="flex items-center text-sm text-slate-400">
-                    {KNOWN_AIRPORTS[form.origin] ?? 'Código IATA de 3 letras'}
+                    {KNOWN_AIRPORTS[form.origin] ?? 'Codigo IATA de 3 letras'}
                   </span>
                 </div>
               </section>
@@ -199,7 +258,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                     value={newDest}
                     onChange={e => setNewDest(e.target.value.toUpperCase())}
                     onKeyDown={e => e.key === 'Enter' && addDest()}
-                    placeholder="Añadir código IATA..."
+                    placeholder="Anadir codigo IATA..."
                     className="flex-1 bg-[#111827] border border-[#1e2d45] text-white text-sm rounded-lg px-3 py-2 uppercase font-mono tracking-widest focus:outline-none focus:border-blue-500 placeholder:normal-case placeholder:font-sans placeholder:tracking-normal placeholder:text-slate-600"
                   />
                   <button
@@ -207,7 +266,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                     className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
                   >
                     <Plus className="w-4 h-4" />
-                    Añadir
+                    Anadir
                   </button>
                 </div>
                 {newDest.length > 0 && newDest.length < 3 && (
@@ -256,7 +315,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                       className="flex-1 accent-blue-500"
                     />
                     <span className="text-sm text-white w-16 shrink-0">
-                      {form.departure_date_step} día{form.departure_date_step > 1 ? 's' : ''}
+                      {form.departure_date_step} dia{form.departure_date_step > 1 ? 's' : ''}
                     </span>
                   </div>
                 </div>
@@ -265,7 +324,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                 {previewDates.length > 0 && (
                   <div className="mt-3 p-3 bg-[#111827] border border-[#1e2d45] rounded-lg">
                     <span className="text-xs text-slate-500 block mb-2">
-                      Se buscarán {previewDates.length} fecha{previewDates.length > 1 ? 's' : ''}:
+                      Se buscaran {previewDates.length} fecha{previewDates.length > 1 ? 's' : ''}:
                     </span>
                     <div className="flex flex-wrap gap-1.5">
                       {previewDates.map(d => (
@@ -286,7 +345,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
               {/* Stay duration */}
               <section>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Duración de la estancia
+                  Duracion de la estancia
                 </label>
                 <div className="flex items-center gap-3">
                   <input
@@ -298,39 +357,158 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
                     className="flex-1 accent-blue-500"
                   />
                   <span className="text-sm text-white w-24 shrink-0 text-right">
-                    {form.stay_days} días
+                    {form.stay_days} dias
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-1.5">
-                  Vuelta {form.stay_days} días después de la salida
+                  Vuelta {form.stay_days} dias despues de la salida
+                </p>
+              </section>
+            </>
+          ) : (
+            /* ═══ FILTERS TAB ═══ */
+            <>
+              {/* Max stops */}
+              <section>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                  Escalas maximas
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {STOPS_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setForm({ ...form!, max_stops: opt.value })}
+                      className={`py-2.5 px-3 rounded-lg text-sm font-medium transition-colors border ${
+                        form!.max_stops === opt.value
+                          ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                          : 'bg-[#111827] border-[#1e2d45] text-slate-400 hover:border-slate-500'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Max duration */}
+              <section>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  Duracion maxima del vuelo
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={8}
+                    max={50}
+                    value={form!.max_duration_hours}
+                    onChange={e => setForm({ ...form!, max_duration_hours: Number(e.target.value) })}
+                    className="flex-1 accent-blue-500"
+                  />
+                  <span className="text-sm text-white w-20 shrink-0 text-right">
+                    {form!.max_duration_hours}h
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {form!.max_duration_hours === 50
+                    ? 'Sin limite de duracion'
+                    : `Solo vuelos de hasta ${form!.max_duration_hours} horas`}
                 </p>
               </section>
 
-              {/* Summary */}
-              <section className="bg-[#111827] border border-[#1e2d45] rounded-xl p-4">
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Resumen
-                </h4>
-                <ul className="space-y-1 text-sm text-slate-300">
-                  <li>
-                    <span className="text-slate-500">Origen: </span>
-                    {form.origin}
-                  </li>
-                  <li>
-                    <span className="text-slate-500">Destinos: </span>
-                    {form.destinations.join(', ')}
-                  </li>
-                  <li>
-                    <span className="text-slate-500">Búsquedas por sweep: </span>
-                    {previewDates.length * form.destinations.length}
-                  </li>
-                  <li>
-                    <span className="text-slate-500">Estancia: </span>
-                    {form.stay_days} días
-                  </li>
-                </ul>
+              {/* Excluded airlines */}
+              <section>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  Aerolineas excluidas
+                </label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Vuelos cuyo nombre de aerolinea contenga estas palabras seran filtrados.
+                </p>
+                <div className="flex flex-wrap gap-1.5 mb-3 max-h-40 overflow-y-auto">
+                  {form!.excluded_airlines.map(kw => (
+                    <div
+                      key={kw}
+                      className="flex items-center gap-1 bg-red-950/40 border border-red-900/50 rounded-lg px-2.5 py-1"
+                    >
+                      <span className="text-xs text-red-300">{kw}</span>
+                      <button
+                        onClick={() => removeExcluded(kw)}
+                        className="text-red-500/50 hover:text-red-400 transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {form!.excluded_airlines.length === 0 && (
+                    <span className="text-xs text-slate-600 italic">Sin exclusiones</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    ref={newExcludedRef}
+                    type="text"
+                    value={newExcluded}
+                    onChange={e => setNewExcluded(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addExcluded()}
+                    placeholder="ej: emirates, qatar..."
+                    className="flex-1 bg-[#111827] border border-[#1e2d45] text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
+                  />
+                  <button
+                    onClick={addExcluded}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-red-900/50 hover:bg-red-800/50 text-red-300 text-sm rounded-lg transition-colors border border-red-800/50"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+                {form!.excluded_airlines.length > 0 && (
+                  <button
+                    onClick={() => setForm({ ...form!, excluded_airlines: [] })}
+                    className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-400 mt-2 transition-colors"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Borrar todas las exclusiones
+                  </button>
+                )}
               </section>
             </>
+          )}
+
+          {/* Summary (always visible) */}
+          {form && (
+            <section className="bg-[#111827] border border-[#1e2d45] rounded-xl p-4">
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                Resumen
+              </h4>
+              <ul className="space-y-1 text-sm text-slate-300">
+                <li>
+                  <span className="text-slate-500">Origen: </span>
+                  {form.origin}
+                </li>
+                <li>
+                  <span className="text-slate-500">Destinos: </span>
+                  {form.destinations.join(', ')}
+                </li>
+                <li>
+                  <span className="text-slate-500">Busquedas por sweep: </span>
+                  {previewDates.length * form.destinations.length}
+                </li>
+                <li>
+                  <span className="text-slate-500">Estancia: </span>
+                  {form.stay_days} dias
+                </li>
+                <li>
+                  <span className="text-slate-500">Escalas: </span>
+                  {STOPS_OPTIONS.find(o => o.value === form.max_stops)?.label ?? `Max ${form.max_stops}`}
+                </li>
+                <li>
+                  <span className="text-slate-500">Duracion max: </span>
+                  {form.max_duration_hours >= 50 ? 'Sin limite' : `${form.max_duration_hours}h`}
+                </li>
+                <li>
+                  <span className="text-slate-500">Excluidas: </span>
+                  {form.excluded_airlines.length} aerolinea{form.excluded_airlines.length !== 1 ? 's' : ''}
+                </li>
+              </ul>
+            </section>
           )}
         </div>
 
@@ -339,7 +517,7 @@ export default function SettingsModal({ open, onClose, onSaved }: Props) {
           {status === 'ok' && (
             <div className="flex items-center gap-2 text-emerald-400 text-sm mb-2">
               <CheckCircle className="w-4 h-4" />
-              Configuración guardada
+              Configuracion guardada
             </div>
           )}
           {status === 'error' && (

@@ -1,74 +1,87 @@
 """
-Two-layer Gulf / Arab carrier filter:
+Configurable flight filters.
 
-1. Name filter (passes_name_filter): used by the fast-flights client.
-   Checks the airline name string returned by Google Flights.
-
-2. Airport filter (passes_layover_filter): backup used when we have
-   explicit stopover airport codes (e.g. from future API upgrades).
+Filters are loaded from the AppConfig DB row and passed to the scraper.
+All filter functions accept explicit parameters — nothing is hard-coded.
 """
 
-# ── Name-based filter ────────────────────────────────────────────────────────
+import re
+import logging
 
-EXCLUDED_AIRLINE_KEYWORDS: list[str] = [
-    # UAE
-    "emirates",
-    "etihad",
-    "flydubai",
-    "air arabia",
-    "wizz air abu dhabi",
-    # Qatar
-    "qatar",
-    # Kuwait
-    "kuwait",
-    # Bahrain
-    "gulf air",
-    # Saudi Arabia
-    "saudia",
-    "saudi arabian",
-    "flynas",
-    "flyadeal",
-    # Oman
-    "oman air",
-    # Iraq / Jordan (routing hubs sometimes used)
-    "royal jordanian",
-    "iraqi airways",
-    # Iran (just in case)
-    "iran air",
-    "mahan air",
-]
+logger = logging.getLogger(__name__)
 
 
-def passes_name_filter(airline_name: str) -> bool:
+def passes_filters(
+    airline_name: str,
+    stops: int,
+    duration_minutes: int,
+    *,
+    excluded_airlines: list[str] | None = None,
+    max_stops: int = 2,
+    max_duration_hours: int = 40,
+) -> bool:
     """
-    Return True if the airline name does NOT match any excluded keyword.
-    Case-insensitive substring check.
+    Return True if the flight passes ALL active filters.
+
+    Parameters
+    ----------
+    airline_name : str
+        Full airline name from the scraper (e.g. "Turkish Airlines").
+    stops : int
+        Number of stops (0 = direct).
+    duration_minutes : int
+        Total flight duration in minutes.
+    excluded_airlines : list[str]
+        Substrings to match against the airline name (case-insensitive).
+    max_stops : int
+        Maximum allowed stops. -1 means unlimited.
+    max_duration_hours : int
+        Maximum allowed duration in hours. 0 means unlimited.
     """
-    lower = airline_name.lower()
-    return not any(kw in lower for kw in EXCLUDED_AIRLINE_KEYWORDS)
+    # Airline exclusion
+    if excluded_airlines:
+        lower = airline_name.lower()
+        if any(kw.lower().strip() in lower for kw in excluded_airlines if kw.strip()):
+            return False
+
+    # Max stops
+    if max_stops >= 0 and stops > max_stops:
+        return False
+
+    # Max duration
+    if max_duration_hours > 0 and duration_minutes > max_duration_hours * 60:
+        return False
+
+    return True
 
 
-# ── Airport-code-based filter (backup) ───────────────────────────────────────
+def parse_duration_minutes(duration_str: str) -> int:
+    """Parse '14h 30m', '14 hr 30 min', '870' → minutes as integer."""
+    if not duration_str:
+        return 0
+    # Pure numeric → already in minutes
+    try:
+        return int(duration_str)
+    except (ValueError, TypeError):
+        pass
+    h_match = re.search(r"(\d+)\s*h", duration_str, re.IGNORECASE)
+    m_match = re.search(r"(\d+)\s*m", duration_str, re.IGNORECASE)
+    hours = int(h_match.group(1)) if h_match else 0
+    minutes = int(m_match.group(1)) if m_match else 0
+    return hours * 60 + minutes
+
+
+# ── Airport-code-based filter (backup for future use) ───────────────────────
 
 EXCLUDED_AIRPORTS: set[str] = {
-    # UAE
-    "DXB", "AUH", "SHJ", "DWC",
-    # Qatar
-    "DOH",
-    # Kuwait
-    "KWI",
-    # Bahrain
-    "BAH",
-    # Saudi Arabia
-    "RUH", "JED", "DMM", "MED", "TIF",
-    # Oman
-    "MCT", "SLL", "MNH",
-    # Iraq
-    "BGW", "BSR", "EBL",
-    # Jordan
-    "AMM",
-    # Egypt
-    "CAI",
+    "DXB", "AUH", "SHJ", "DWC",  # UAE
+    "DOH",                         # Qatar
+    "KWI",                         # Kuwait
+    "BAH",                         # Bahrain
+    "RUH", "JED", "DMM", "MED",   # Saudi Arabia
+    "MCT",                         # Oman
+    "BGW", "BSR", "EBL",          # Iraq
+    "AMM",                         # Jordan
 }
 
 

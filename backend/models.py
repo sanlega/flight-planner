@@ -4,6 +4,14 @@ from sqlalchemy import String, Integer, Float, DateTime, Date, Boolean, Text, Un
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
+DEFAULT_EXCLUDED_AIRLINES = json.dumps([
+    "emirates", "etihad", "flydubai", "air arabia", "wizz air abu dhabi",
+    "qatar", "kuwait", "gulf air",
+    "saudia", "saudi arabian", "flynas", "flyadeal",
+    "oman air", "royal jordanian", "iraqi airways",
+    "iran air", "mahan air",
+])
+
 
 class FlightOffer(Base):
     __tablename__ = "flight_offers"
@@ -68,6 +76,13 @@ class AppConfig(Base):
     departure_date_step: Mapped[int] = mapped_column(Integer, default=2)
     stay_days: Mapped[int] = mapped_column(Integer, default=12)
 
+    # ── Filter settings ─────────────────────────────────────────────────────
+    max_stops: Mapped[int] = mapped_column(Integer, default=2)
+    max_duration_hours: Mapped[int] = mapped_column(Integer, default=40)
+    excluded_airlines_json: Mapped[str] = mapped_column(
+        Text, default=DEFAULT_EXCLUDED_AIRLINES
+    )
+
     def get_destinations(self) -> list[str]:
         return json.loads(self.destinations_json)
 
@@ -81,6 +96,12 @@ class AppConfig(Base):
 
     def get_routes(self) -> list[tuple[str, str]]:
         return [(self.origin, dest) for dest in self.get_destinations()]
+
+    def get_excluded_airlines(self) -> list[str]:
+        try:
+            return json.loads(self.excluded_airlines_json)
+        except Exception:
+            return []
 
 
 class QuotaUsage(Base):
