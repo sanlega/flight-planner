@@ -5,3 +5,4 @@ apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic==2.7.1
 fast-flights==2.2
+bcrypt==4.2.1

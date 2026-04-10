@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plane, ChevronDown, ChevronUp, Shield, Settings } from 'lucide-react'
+import { Plane, ChevronDown, ChevronUp, Settings, LogOut } from 'lucide-react'
 import {
   fetchOffers,
   fetchHistory,
@@ -13,16 +13,23 @@ import {
   type SearchRun,
   type AppConfig,
 } from './api/flights'
+import { checkAuth, logout as apiLogout, type AuthUser } from './api/auth'
 import PriceChart from './components/PriceChart'
 import FlightCard from './components/FlightCard'
 import RouteFilter from './components/RouteFilter'
 import StatsBar from './components/StatsBar'
 import QuotaTracker from './components/QuotaTracker'
 import SettingsModal from './components/SettingsModal'
+import LoginPage from './components/LoginPage'
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000 // re-fetch data every 5 min
 
 export default function App() {
+  // Auth state
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+
+  // Data state
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [offers, setOffers] = useState<FlightOffer[]>([])
   const [history, setHistory] = useState<PriceSeries[]>([])
@@ -38,6 +45,22 @@ export default function App() {
   const [maxDurationH, setMaxDurationH] = useState(50) // 50 = no limit
   const [showChart, setShowChart] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
+
+  // Check auth on mount
+  useEffect(() => {
+    checkAuth()
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setAuthLoading(false))
+  }, [])
+
+  const handleLogout = async () => {
+    await apiLogout().catch(() => {})
+    setUser(null)
+    setOffers([])
+    setHistory([])
+    setConfig(null)
+  }
 
   const loadAll = useCallback(async () => {
     try {
@@ -70,6 +93,10 @@ export default function App() {
       setHistory(rawHistory.series)
       setError(null)
     } catch (e: any) {
+      if (e?.response?.status === 401) {
+        setUser(null)
+        return
+      }
       setError(e?.message ?? 'Error al cargar datos')
     } finally {
       setLoading(false)
@@ -77,10 +104,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!user) return
     loadAll()
     const interval = setInterval(loadAll, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
-  }, [loadAll])
+  }, [loadAll, user])
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -136,6 +164,19 @@ export default function App() {
         : a.departure_date.localeCompare(b.departure_date),
     )
 
+  // Auth loading
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0f1e] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // Not authenticated → show login
+  if (!user) {
+    return <LoginPage onLogin={(u) => { setUser(u); setLoading(true) }} />
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0f1e]">
@@ -150,20 +191,23 @@ export default function App() {
               <h1 className="text-base font-bold text-white leading-none">
                 Flight Tracker
               </h1>
-              <p className="text-xs text-slate-500 mt-0.5">MAD → China · Octubre 2026</p>
+              <p className="text-xs text-slate-500 mt-0.5">{user.username}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
-              <Shield className="w-3.5 h-3.5 text-emerald-500" />
-              Sin escalas en países árabes
-            </div>
             <button
               onClick={() => setShowSettings(true)}
               className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white border border-[#1e2d45] hover:border-slate-600 rounded-lg px-3 py-1.5 transition-colors"
             >
               <Settings className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Configurar</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-400 border border-[#1e2d45] hover:border-red-800 rounded-lg px-3 py-1.5 transition-colors"
+              title="Cerrar sesion"
+            >
+              <LogOut className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

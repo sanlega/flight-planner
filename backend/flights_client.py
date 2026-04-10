@@ -41,6 +41,123 @@ try:
 except Exception as _patch_err:
     logger.warning("Could not patch primp for GDPR bypass: %s", _patch_err)
 
+# ── Monkey-patch fast-flights parser for more resilient time extraction ─────
+
+try:
+    import fast_flights.core as _ff_core
+    from selectolax.lexbor import LexborHTMLParser as _LHP
+    from fast_flights.schema import Flight as _Flight, Result as _Result
+
+    _ORIG_PARSE = _ff_core.parse_response
+
+    def _patched_parse_response(r, *, dangerously_allow_looping_last_item=False):
+        """More resilient parser that tries broader CSS selectors as fallback."""
+
+        class _blank:
+            def text(self, *_, **__):
+                return ""
+            def iter(self):
+                return []
+
+        blank = _blank()
+
+        def safe(n):
+            return n or blank
+
+        parser = _LHP(r.text)
+        flights = []
+
+        for i, fl in enumerate(parser.css('div[jsname="IWWDBc"], div[jsname="YdtKid"]')):
+            is_best_flight = i == 0
+
+            for item in fl.css("ul.Rk10dc li")[
+                : (None if dangerously_allow_looping_last_item or i == 0 else -1)
+            ]:
+                # Flight name — try original, then broader selectors
+                name = safe(item.css_first("div.sSHqwe.tPgKwe.ogfYpf span")).text(strip=True)
+                if not name:
+                    name = safe(item.css_first("div.sSHqwe span")).text(strip=True)
+
+                # Departure & arrival time — try original, then broader selectors
+                dp_ar_node = item.css("span.mv1WYe div")
+                try:
+                    departure_time = dp_ar_node[0].text(strip=True)
+                    arrival_time = dp_ar_node[1].text(strip=True)
+                except IndexError:
+                    departure_time = ""
+                    arrival_time = ""
+
+                if not departure_time:
+                    # Fallback: try broader time selectors
+                    time_nodes = item.css("div.wtdjmc span.mv1WYe") or item.css("span.mv1WYe")
+                    if len(time_nodes) >= 2:
+                        departure_time = time_nodes[0].text(strip=True)
+                        arrival_time = time_nodes[1].text(strip=True)
+
+                if not departure_time:
+                    # Last resort: regex for time patterns in the item HTML
+                    item_text = item.html or ""
+                    time_matches = re.findall(r'(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))', item_text)
+                    if len(time_matches) >= 2:
+                        departure_time = time_matches[0]
+                        arrival_time = time_matches[1]
+
+                # Arrival time ahead
+                time_ahead = safe(item.css_first("span.bOzv6")).text()
+
+                # Duration — try original, then broader
+                duration = safe(item.css_first("li div.Ak5kof div")).text()
+                if not duration:
+                    duration = safe(item.css_first("div.Ak5kof")).text()
+                if not duration:
+                    # Regex fallback for duration
+                    item_text = item.html or ""
+                    dur_m = re.search(r'(\d+\s*(?:hr?|hours?)\s*\d*\s*(?:min|m)?)', item_text, re.I)
+                    if dur_m:
+                        duration = dur_m.group(1)
+
+                # Stops
+                stops = safe(item.css_first(".BbR8Ec .ogfYpf")).text()
+                if not stops:
+                    stops = safe(item.css_first(".BbR8Ec")).text()
+
+                # Delay
+                delay = safe(item.css_first(".GsCCve")).text() or None
+
+                # Price
+                price = safe(item.css_first(".YMlIz.FpEdX")).text() or "0"
+                if not price or price == "0":
+                    price = safe(item.css_first(".YMlIz")).text() or "0"
+
+                # Stops formatting
+                try:
+                    stops_fmt = 0 if "nonstop" in stops.lower() else int(stops.split(" ", 1)[0])
+                except (ValueError, AttributeError):
+                    stops_fmt = "Unknown"
+
+                flights.append({
+                    "is_best": is_best_flight,
+                    "name": name,
+                    "departure": " ".join(departure_time.split()),
+                    "arrival": " ".join(arrival_time.split()),
+                    "arrival_time_ahead": time_ahead,
+                    "duration": duration,
+                    "stops": stops_fmt,
+                    "delay": delay,
+                    "price": price.replace(",", ""),
+                })
+
+        current_price = safe(parser.css_first("span.gOatQ")).text()
+        if not flights:
+            raise RuntimeError("No flights found:\n{}".format(r.text_markdown))
+
+        return _Result(current_price=current_price, flights=[_Flight(**fl) for fl in flights])
+
+    _ff_core.parse_response = _patched_parse_response
+    logger.info("Monkey-patched fast-flights parse_response with resilient parser")
+except Exception as _patch_err:
+    logger.warning("Could not patch fast-flights parser: %s", _patch_err)
+
 # ── Airline name → IATA code mapping ────────────────────────────────────────
 
 AIRLINE_NAME_TO_CODE: dict[str, str] = {

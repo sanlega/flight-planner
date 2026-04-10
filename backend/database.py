@@ -54,6 +54,7 @@ def migrate_schema():
                 "excluded_airlines_json",
                 """TEXT DEFAULT '["emirates","etihad","flydubai","air arabia","wizz air abu dhabi","qatar","kuwait","gulf air","saudia","saudi arabian","flynas","flyadeal","oman air","royal jordanian","iraqi airways","iran air","mahan air"]'""",
             ),
+            ("user_id", "INTEGER"),
         ]
 
         for col_name, col_def in migrations:
@@ -62,6 +63,20 @@ def migrate_schema():
                     f"ALTER TABLE app_config ADD COLUMN {col_name} {col_def}"
                 )
                 logger.info("Migrated: added column app_config.%s", col_name)
+
+        # Add user_id to flight_offers
+        cursor.execute("PRAGMA table_info(flight_offers)")
+        fo_cols = {row[1] for row in cursor.fetchall()}
+        if "user_id" not in fo_cols:
+            cursor.execute("ALTER TABLE flight_offers ADD COLUMN user_id INTEGER")
+            logger.info("Migrated: added column flight_offers.user_id")
+
+        # Add user_id to search_runs
+        cursor.execute("PRAGMA table_info(search_runs)")
+        sr_cols = {row[1] for row in cursor.fetchall()}
+        if "user_id" not in sr_cols:
+            cursor.execute("ALTER TABLE search_runs ADD COLUMN user_id INTEGER")
+            logger.info("Migrated: added column search_runs.user_id")
 
         conn.commit()
         conn.close()

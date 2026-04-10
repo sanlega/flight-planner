@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 
 from database import get_db
-from models import FlightOffer, SearchRun, AppConfig
+from models import FlightOffer, SearchRun, AppConfig, User
 from flights_client import google_flights_url
 from scheduler import run_sweep
+from auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ def get_best_offers(
     route: Optional[str] = Query(None, description="Filter by route, e.g. MAD-PEK"),
     departure_date: Optional[str] = Query(None),
     limit: int = Query(20, le=100),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Returns the cheapest offer per route+departure_date from the latest sweep."""
@@ -106,6 +108,7 @@ def get_best_offers(
             FlightOffer.departure_date,
             func.max(FlightOffer.scraped_at).label("latest"),
         )
+        .filter(FlightOffer.user_id == user.id)
         .group_by(FlightOffer.route, FlightOffer.departure_date)
         .subquery()
     )
@@ -118,6 +121,7 @@ def get_best_offers(
             & (FlightOffer.departure_date == latest_sq.c.departure_date)
             & (FlightOffer.scraped_at == latest_sq.c.latest),
         )
+        .filter(FlightOffer.user_id == user.id)
         .order_by(FlightOffer.price_eur)
     )
 
@@ -140,6 +144,7 @@ def get_price_history(
     route: Optional[str] = Query(None),
     departure_date: Optional[str] = Query(None),
     days: int = Query(30, le=90),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     since = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -152,7 +157,7 @@ def get_price_history(
             FlightOffer.scraped_at,
             func.min(FlightOffer.price_eur).label("min_price"),
         )
-        .filter(FlightOffer.scraped_at >= since)
+        .filter(FlightOffer.scraped_at >= since, FlightOffer.user_id == user.id)
         .group_by(FlightOffer.route, FlightOffer.departure_date, FlightOffer.scraped_at)
         .order_by(FlightOffer.scraped_at)
     )
@@ -187,12 +192,16 @@ def get_price_history(
 # ─── Search statistics ───────────────────────────────────────────────────────
 
 @router.get("/quota")
-def get_search_stats(db: Session = Depends(get_db)):
+def get_search_stats(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Returns how many searches have been done this month."""
     month = datetime.utcnow().strftime("%Y-%m")
     since = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    count = db.query(SearchRun).filter(SearchRun.started_at >= since, SearchRun.success == True).count()
-    cfg = _get_or_create_config(db)
+    count = db.query(SearchRun).filter(
+        SearchRun.started_at >= since,
+        SearchRun.success == True,
+        SearchRun.user_id == user.id,
+    ).count()
+    cfg = _get_or_create_config(db, user.id)
     n_routes = len(cfg.get_destinations())
     n_dates = len(cfg.get_departure_dates())
     return {
@@ -208,8 +217,18 @@ def get_search_stats(db: Session = Depends(get_db)):
 # ─── Search runs history ─────────────────────────────────────────────────────
 
 @router.get("/runs")
-def get_search_runs(limit: int = Query(10, le=50), db: Session = Depends(get_db)):
-    runs = db.query(SearchRun).order_by(desc(SearchRun.started_at)).limit(limit).all()
+def get_search_runs(
+    limit: int = Query(10, le=50),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    runs = (
+        db.query(SearchRun)
+        .filter(SearchRun.user_id == user.id)
+        .order_by(desc(SearchRun.started_at))
+        .limit(limit)
+        .all()
+    )
     return [
         {
             "id": r.id,
@@ -229,9 +248,9 @@ def get_search_runs(limit: int = Query(10, le=50), db: Session = Depends(get_db)
 # ─── Manual refresh ──────────────────────────────────────────────────────────
 
 @router.post("/refresh")
-async def manual_refresh():
+async def manual_refresh(user: User = Depends(get_current_user)):
     try:
-        result = await run_sweep(triggered_by="manual")
+        result = await run_sweep(triggered_by="manual", user_id=user.id)
         return result
     except Exception as exc:
         logger.exception("Manual refresh failed")
@@ -252,10 +271,10 @@ class SettingsIn(BaseModel):
     excluded_airlines: List[str] = []
 
 
-def _get_or_create_config(db: Session) -> AppConfig:
-    cfg = db.query(AppConfig).first()
+def _get_or_create_config(db: Session, user_id: int) -> AppConfig:
+    cfg = db.query(AppConfig).filter(AppConfig.user_id == user_id).first()
     if cfg is None:
-        cfg = AppConfig(id=1)
+        cfg = AppConfig(user_id=user_id)
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
@@ -263,8 +282,8 @@ def _get_or_create_config(db: Session) -> AppConfig:
 
 
 @router.get("/settings")
-def get_settings(db: Session = Depends(get_db)):
-    cfg = _get_or_create_config(db)
+def get_settings(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cfg = _get_or_create_config(db, user.id)
     return {
         "origin": cfg.origin,
         "destinations": cfg.get_destinations(),
@@ -279,7 +298,7 @@ def get_settings(db: Session = Depends(get_db)):
 
 
 @router.put("/settings")
-def update_settings(body: SettingsIn, db: Session = Depends(get_db)):
+def update_settings(body: SettingsIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not body.origin or len(body.origin) != 3:
         raise HTTPException(status_code=400, detail="Origin must be a 3-letter IATA code")
     if not body.destinations:
@@ -298,7 +317,7 @@ def update_settings(body: SettingsIn, db: Session = Depends(get_db)):
     if end < start:
         raise HTTPException(status_code=400, detail="End date must be after start date")
 
-    cfg = _get_or_create_config(db)
+    cfg = _get_or_create_config(db, user.id)
     cfg.origin = body.origin.upper().strip()
     cfg.destinations_json = json.dumps([d.upper().strip() for d in body.destinations if d.strip()])
     cfg.departure_date_start = start
@@ -317,8 +336,8 @@ def update_settings(body: SettingsIn, db: Session = Depends(get_db)):
 # ─── Config metadata (used by frontend filters) ───────────────────────────────
 
 @router.get("/config")
-def get_config(db: Session = Depends(get_db)):
-    cfg = _get_or_create_config(db)
+def get_config(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cfg = _get_or_create_config(db, user.id)
     routes = [f"{cfg.origin}-{dest}" for dest in cfg.get_destinations()]
     dep_dates = [d.isoformat() for d in cfg.get_departure_dates()]
     return {

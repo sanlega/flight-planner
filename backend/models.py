@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, date, timedelta
-from sqlalchemy import String, Integer, Float, DateTime, Date, Boolean, Text, UniqueConstraint
+from sqlalchemy import String, Integer, Float, DateTime, Date, Boolean, Text, UniqueConstraint, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -13,10 +13,35 @@ DEFAULT_EXCLUDED_AIRLINES = json.dumps([
 ])
 
 
+# ── Auth models ────────────────────────────────────────────────────────────
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+# ── Flight models ──────────────────────────────────────────────────────────
+
 class FlightOffer(Base):
     __tablename__ = "flight_offers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     route: Mapped[str] = mapped_column(String(10))          # e.g. "MAD-PEK"
     departure_date: Mapped[date] = mapped_column(Date)
     return_date: Mapped[date] = mapped_column(Date)
@@ -52,6 +77,7 @@ class SearchRun(Base):
     __tablename__ = "search_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     routes_searched: Mapped[int] = mapped_column(Integer, default=0)
@@ -63,10 +89,11 @@ class SearchRun(Base):
 
 
 class AppConfig(Base):
-    """Singleton row (id=1) holding user-configurable search parameters."""
+    """Per-user search configuration."""
     __tablename__ = "app_config"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, unique=True, index=True)
     origin: Mapped[str] = mapped_column(String(10), default="MAD")
     destinations_json: Mapped[str] = mapped_column(
         Text, default='["PEK","PVG","CAN","SZX","HKG"]'

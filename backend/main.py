@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import Base, engine, migrate_schema
 from routes import router
+from auth import router as auth_router
 from scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
@@ -45,6 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(router)
 
 
